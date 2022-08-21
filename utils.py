@@ -1,11 +1,13 @@
 import os
 import math
 
+import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.ndimage as nd
 import SimpleITK as sitk
+from skimage import exposure
 
 import torch
 import torch.nn as nn
@@ -13,6 +15,12 @@ import torch.nn.functional as F
 
 def normalize(image):
     return (image - np.min(image)) / (np.max(image) - np.min(image))
+
+def normalize_advanced(image, p_lower=10, p_upper=98, ksize=5):
+    median_blurred_image = cv2.medianBlur(cv2.resize((image*255).astype('uint8'), (512,512)), ksize=ksize)
+    p_lower = np.percentile(median_blurred_image, p_lower) / 255
+    p_upper = np.percentile(median_blurred_image, p_upper) / 255
+    return exposure.rescale_intensity(image, in_range=(p_lower, p_upper))
 
 def load_landmarks(landmarks_path):
     landmarks = pd.read_csv(landmarks_path)
@@ -186,86 +194,11 @@ def load_pair(case_id, dataset_path, load_masks=False):
     else:
         return source, target, source_landmarks, target_landmarks, status,
 
-def compose_displacement_field(u, v, device="cpu", delete_outliers=True, return_indexes=False):
-    size = u.size()
-    x_size = size[2]
-    y_size = size[1]
-    gy, gx = torch.meshgrid(torch.arange(y_size), torch.arange(x_size))
-    gy = gy.type(torch.FloatTensor).to(device)
-    gx = gx.type(torch.FloatTensor).to(device)
-    grid_x = (gx / (x_size - 1) - 0.5)*2
-    grid_y = (gy / (y_size - 1) - 0.5)*2
-    u_x_1 = u[0, :, :].view(1, u.size(1), u.size(2))
-    u_y_1 = u[1, :, :].view(1, u.size(1), u.size(2))
-    u_x_2 = v[0, :, :].view(1, v.size(1), v.size(2))
-    u_y_2 = v[1, :, :].view(1, v.size(1), v.size(2))
-    u_x_1 = u_x_1 / (x_size - 1) * 2
-    u_y_1 = u_y_1 / (y_size - 1) * 2
-    u_x_2 = u_x_2 / (x_size - 1) * 2
-    u_y_2 = u_y_2 / (y_size - 1) * 2
-    n_grid_x = grid_x.view(grid_x.size(0), grid_x.size(1))
-    n_grid_y = grid_y.view(grid_y.size(0), grid_y.size(1))
-    n_grid = torch.stack((n_grid_x, n_grid_y), dim=2)
-    nv = torch.stack((u_x_2, u_y_2), dim=3)[0]
-    t_x = n_grid_x.view(1, n_grid_x.size(0), n_grid_x.size(1))
-    t_y = n_grid_y.view(1, n_grid_y.size(0), n_grid_y.size(1))
-    added_x = u_x_1 + t_x
-    added_y = u_y_1 + t_y
-    added_grid = n_grid + nv
-    i_u_x = F.grid_sample(added_x.view(1, added_x.size(0), added_x.size(1), added_x.size(2)), added_grid.view(1, added_grid.size(0), added_grid.size(1), added_grid.size(2)), padding_mode='border')[0]
-    i_u_y = F.grid_sample(added_y.view(1, added_y.size(0), added_y.size(1), added_y.size(2)), added_grid.view(1, added_grid.size(0), added_grid.size(1), added_grid.size(2)), padding_mode='border')[0]
-    indexes = (added_grid[:, :, 0] >= 1.0) | (added_grid[:, :, 0] <= -1.0) | (added_grid[:, :, 1] >= 1.0) | (added_grid[:, :, 1] <= -1.0)
-    indexes = indexes.view(1, indexes.size(0), indexes.size(1))
-    n_x = i_u_x - grid_x
-    n_y = i_u_y - grid_y
-    if delete_outliers:
-        n_x[indexes] = 0.0
-        n_y[indexes] = 0.0
-    n_x = n_x / 2 * (x_size - 1)
-    n_y = n_y / 2 * (y_size - 1)
-    if return_indexes:
-        return torch.cat((n_x, n_y), dim=0), indexes
-    else:
-        return torch.cat((n_x, n_y), dim=0)
+def compose_displacement_field(u, v, device="cpu"):
+    return u + stn(v.unsqueeze(0), u[[1,0],...].unsqueeze(0), pad='border')[0]
 
 def compose_displacement_fields(u, v, device="cpu"):
-    size = u.size()
-    no_samples = size[0]
-    x_size = size[3]
-    y_size = size[2]
-    gy, gx = torch.meshgrid(torch.arange(y_size), torch.arange(x_size))
-    gy = gy.type(torch.FloatTensor).to(device)
-    gx = gx.type(torch.FloatTensor).to(device)
-    grid_x = (gx / (x_size - 1) - 0.5)*2
-    grid_y = (gy / (y_size - 1) - 0.5)*2
-    u_x_1 = u[:, 0, :, :].view(u.size(0), 1, u.size(2), u.size(3))
-    u_y_1 = u[:, 1, :, :].view(u.size(0), 1, u.size(2), u.size(3))
-    u_x_2 = v[:, 0, :, :].view(v.size(0), 1, v.size(2), v.size(3))
-    u_y_2 = v[:, 1, :, :].view(v.size(0), 1, v.size(2), v.size(3))
-    u_x_1 = u_x_1 / (x_size - 1) * 2
-    u_y_1 = u_y_1 / (y_size - 1) * 2
-    u_x_2 = u_x_2 / (x_size - 1) * 2
-    u_y_2 = u_y_2 / (y_size - 1) * 2
-    n_grid_x = grid_x.view(1, -1).repeat(no_samples, 1).view(-1, grid_x.size(0), grid_x.size(1))
-    n_grid_y = grid_y.view(1, -1).repeat(no_samples, 1).view(-1, grid_y.size(0), grid_y.size(1))
-    n_grid = torch.stack((n_grid_x, n_grid_y), dim=3)
-    nv = torch.stack((u_x_2.view(u_x_2.size(0), u_x_2.size(2), u_x_2.size(3)), u_y_2.view(u_y_2.size(0), u_y_2.size(2), u_y_2.size(3))), dim=3)
-    t_x = n_grid_x.view(n_grid_x.size(0), 1, n_grid_x.size(1), n_grid_x.size(2))
-    t_y = n_grid_y.view(n_grid_y.size(0), 1, n_grid_y.size(1), n_grid_y.size(2))
-    added_x = u_x_1 + t_x
-    added_y = u_y_1 + t_y
-    added_grid = n_grid + nv
-    i_u_x = F.grid_sample(added_x, added_grid, padding_mode='border')
-    i_u_y = F.grid_sample(added_y, added_grid, padding_mode='border')
-    indexes = (added_grid[:, :, :, 0] >= 1.0) | (added_grid[:, :, :, 0] <= -1.0) | (added_grid[:, :, :, 1] >= 1.0) | (added_grid[:, :, :, 1] <= -1.0)
-    indexes = indexes.view(indexes.size(0), 1, indexes.size(1), indexes.size(2))
-    n_x = i_u_x - grid_x
-    n_y = i_u_y - grid_y
-    n_x[indexes] = 0.0
-    n_y[indexes] = 0.0
-    n_x = n_x / 2 * (x_size - 1)
-    n_y = n_y / 2 * (y_size - 1)
-    return torch.cat((n_x, n_y), dim=1)
+    return u + stn(v, u[:,[1,0],...], pad='border')
 
 def compose_transforms(t1, t2, shape, device="cpu"):
     tr1 = torch.zeros((3, 3)).to(device)
@@ -296,7 +229,7 @@ def warp_tensor(tensor, displacement_field, device="cpu"):
     u_y = u_y / (y_size - 1) * 2
     n_grid[:, :, 0] = n_grid[:, :, 0] + u_x
     n_grid[:, :, 1] = n_grid[:, :, 1] + u_y
-    transformed_tensor = F.grid_sample(tensor.view(1, 1, y_size, x_size), n_grid.view(1, n_grid.size(0), n_grid.size(1), n_grid.size(2)), mode='bilinear', padding_mode='zeros')[0, 0, :, :]
+    transformed_tensor = F.grid_sample(tensor.view(1, 1, y_size, x_size), n_grid.view(1, n_grid.size(0), n_grid.size(1), n_grid.size(2)), mode='bicubic', padding_mode='zeros')[0, 0, :, :]
     return transformed_tensor
 
 def warp_tensors(tensors, displacement_fields, device="cpu"):
@@ -319,7 +252,7 @@ def warp_tensors(tensors, displacement_fields, device="cpu"):
     u_y = u_y / (y_size - 1) * 2
     n_grid[:, :, :, 0] = n_grid[:, :, :, 0] + u_x
     n_grid[:, :, :, 1] = n_grid[:, :, :, 1] + u_y
-    transformed_tensors = F.grid_sample(tensors, n_grid, mode='bilinear', padding_mode='zeros')
+    transformed_tensors = F.grid_sample(tensors, n_grid, mode='bicubic', padding_mode='zeros')
     return transformed_tensors
 
 def resample_tensor(tensor, new_size, device="cpu"):
@@ -333,7 +266,7 @@ def resample_tensor(tensor, new_size, device="cpu"):
     n_grid_x = grid_x.view(-1, grid_x.size(0), grid_x.size(1))
     n_grid_y = grid_y.view(-1, grid_y.size(0), grid_y.size(1))
     n_grid = torch.stack((n_grid_x, n_grid_y), dim=3)
-    resampled_tensor = F.grid_sample(tensor.view(1, 1, tensor.size(0), tensor.size(1)), n_grid, mode='bilinear', padding_mode='zeros')[0, 0, :, :]
+    resampled_tensor = F.grid_sample(tensor.view(1, 1, tensor.size(0), tensor.size(1)), n_grid, mode='bicubic', padding_mode='zeros')[0, 0, :, :]
     return resampled_tensor
 
 def resample_tensors(tensors, new_size, device="cpu"):
@@ -349,7 +282,7 @@ def resample_tensors(tensors, new_size, device="cpu"):
     n_grid_x = grid_x.view(1, -1).repeat(no_samples, 1).view(-1, grid_x.size(0), grid_x.size(1))
     n_grid_y = grid_y.view(1, -1).repeat(no_samples, 1).view(-1, grid_y.size(0), grid_y.size(1))
     n_grid = torch.stack((n_grid_x, n_grid_y), dim=3)
-    resampled_tensors = F.grid_sample(tensors, n_grid, mode='bilinear', padding_mode='zeros')
+    resampled_tensors = F.grid_sample(tensors, n_grid, mode='bicubic', padding_mode='zeros')
     return resampled_tensors
 
 def affine2theta(affine, shape):
@@ -506,6 +439,27 @@ def build_pyramid(tensor, num_levels, device="cpu"):
             new_tensor = resample_tensors(tensor, new_size, device=device)
             pyramid.append(new_tensor)
     return pyramid
+
+def stn(src, flow, mode='bicubic', corners=False, pad='zeros'):
+
+    shape = flow.shape[2:]
+    vectors = [torch.arange(0, s) for s in shape]
+    grids = torch.meshgrid(vectors)
+    grid = torch.stack(grids)
+    grid = torch.unsqueeze(grid, 0)
+    grid = grid.type(torch.FloatTensor).to('cuda')
+
+    new_locs = grid + flow
+
+    # need to normalize grid values to [-1, 1] for resampler
+    for i in range(len(shape)):
+        new_locs[:, i, ...] = 2 * (new_locs[:, i, ...] / (shape[i] - 1) - 0.5)
+
+    new_locs = new_locs.permute(0, 2, 3, 1)
+    new_locs = new_locs[..., [1, 0]]
+
+    return F.grid_sample(src, new_locs, align_corners=corners, mode=mode, padding_mode=pad)
+
 
 
 
