@@ -23,14 +23,16 @@ python3 -m venv env
 source env/bin/activate
 ```
 
-Install dependencies from requirements.txt:
+Configure DeepHistReg framework as suggested by [authors](https://github.com/MWod/DeepHistReg)
+
+Install LoFTR dependencies from requirements.txt:
 
 ```
 python3 -m pip install --upgrade pip
 ```
 
 ```
-pip install -r requirements.txt
+pip install -r .networks/feature_matching/requirements.txt
 ```
 
 Install QuadTree Attention module:
