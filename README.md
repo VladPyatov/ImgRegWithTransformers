@@ -1,5 +1,5 @@
 ### Transformer-based Affine Registration Framework
-This repository is based on [DeepHistReg framework](https://github.com/MWod/DeepHistReg) and uses [LoFTR](https://github.com/zju3dv/LoFTR) with [QuadTree Attention](https://github.com/tangshitao/quadtreeattention) for affine registration.
+This repository is based on [DeepHistReg framework](https://github.com/MWod/DeepHistReg) and uses [LoFTR](https://github.com/zju3dv/LoFTR) with [QuadTree Attention](https://github.com/tangshitao/quadtreeattention) for affine registration. We recommend to use this version as it fixes a bug related to compose_displacement_field function (which resulted in artifacts near image borders) and adopts standart STN implementation
 
 ### How to run registration:
 
@@ -32,7 +32,7 @@ python3 -m pip install --upgrade pip
 ```
 
 ```
-pip install -r .networks/feature_matching/requirements.txt
+pip install -r networks/feature_matching/requirements.txt
 ```
 
 Install QuadTree Attention module:
