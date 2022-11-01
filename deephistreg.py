@@ -155,11 +155,11 @@ def deephistreg(source, target, device, params):
                 batch = {'image0': rot_source[None][None], 'image1': resampled_target[None][None]}
                 affine_model(batch)
                 mkpts0 = batch['mkpts0_f'].cpu().numpy()
-                mkpts0[:, 0] = mkpts0[:, 0] / new_shape[0] * warped_source.shape[0]
-                mkpts0[:, 1] = mkpts0[:, 1] / new_shape[1] * warped_source.shape[1]
+                mkpts0[:, 0] = mkpts0[:, 0] / new_shape[1] * warped_source.shape[1]
+                mkpts0[:, 1] = mkpts0[:, 1] / new_shape[0] * warped_source.shape[0]
                 mkpts1 = batch['mkpts1_f'].cpu().numpy()
-                mkpts1[:, 0] = mkpts1[:, 0] / new_shape[0] * warped_source.shape[0]
-                mkpts1[:, 1] = mkpts1[:, 1] / new_shape[1] * warped_source.shape[1]
+                mkpts1[:, 0] = mkpts1[:, 0] / new_shape[1] * warped_source.shape[1]
+                mkpts1[:, 1] = mkpts1[:, 1] / new_shape[0] * warped_source.shape[0]
                 try:
                     (matrix, inliers) = cv2.estimateAffine2D(mkpts1, mkpts0, method=cv2.LMEDS, maxIters=10000)
                     # (model, inliers) = ransac((mkpts1, mkpts0), AffineTransform, min_samples=3, max_trials=10000,
